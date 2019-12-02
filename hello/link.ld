@@ -21,4 +21,3 @@ SECTIONS
 }
 
 PROVIDE(_out  = 0x80000000);
-PROVIDE(_halt = 0x80000004);

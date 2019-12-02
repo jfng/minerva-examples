@@ -13,6 +13,4 @@ _start:
 	addi a0, a0, 1
 	bnez t0, 1b
 
-	la a1, _halt
-	sb zero, 0(a1)
 2:	j 2b

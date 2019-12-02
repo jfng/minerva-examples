@@ -55,8 +55,8 @@ class WishboneArbiter(Elaboratable):
 
 class Top(Elaboratable):
     def __init__(self, rom_init):
-        self.out  = wishbone.Interface(addr_width=1, data_width=8)
-        self.halt = wishbone.Interface(addr_width=1, data_width=8)
+        self.stb      = Signal()
+        self.dout     = Signal(8)
         self.rom_init = rom_init
 
     def elaborate(self, platform):
@@ -64,13 +64,14 @@ class Top(Elaboratable):
 
         m.submodules.rom = rom = WishboneROM(rom_init=self.rom_init)
 
+        out = wishbone.Interface(addr_width=1, data_width=8)
+
         decoder = wishbone.Decoder(addr_width=30, data_width=32, granularity=8)
-        decoder.add(rom.bus,   addr=0x00000000)
-        decoder.add(self.out,  addr=0x80000000, sparse=True)
-        decoder.add(self.halt, addr=0x80000004, sparse=True)
+        decoder.add(rom.bus, addr=0x00000000)
+        decoder.add(out,     addr=0x80000000, sparse=True)
         m.submodules.decoder = decoder
 
-        arbiter = m.submodules.arbiter = WishboneArbiter()
+        m.submodules.arbiter = arbiter = WishboneArbiter()
 
         m.submodules.cpu = cpu = Minerva()
         m.d.comb += [
@@ -93,6 +94,12 @@ class Top(Elaboratable):
             arbiter.shared.connect(decoder.bus)
         ]
 
+        m.d.comb += self.dout.eq(out.dat_w)
+        m.d.sync += out.ack.eq(0)
+        with m.If(out.cyc & out.stb & ~out.ack):
+            m.d.comb += self.stb.eq(1)
+            m.d.sync += out.ack.eq(1)
+
         return m
 
 
@@ -101,18 +108,18 @@ if __name__ == "__main__":
         prog = [w for w in iter(lambda: int.from_bytes(f.read(4), byteorder="little"), 0)]
 
     dut = Top(rom_init=prog)
+    sim = Simulator(dut)
 
-    with Simulator(dut) as sim:
-        def process():
-            while not ((yield dut.halt.cyc) and (yield dut.halt.stb)):
-                if (yield dut.out.cyc) and (yield dut.out.stb):
-                    if (yield dut.out.we):
-                        sys.stdout.write(chr((yield dut.out.dat_w[:8])))
-                    yield dut.out.ack.eq(1)
-                    yield Tick()
-                    yield dut.out.ack.eq(0)
-                yield Tick()
+    def process():
+        while True:
+            if (yield dut.stb):
+                dout = (yield dut.dout)
+                if dout:
+                    sys.stdout.write(chr(dout))
+                else:
+                    break
+            yield
 
-        sim.add_clock(1e-6)
-        sim.add_sync_process(process)
-        sim.run()
+    sim.add_clock(1e-6)
+    sim.add_sync_process(process)
+    sim.run()
