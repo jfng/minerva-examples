@@ -1,22 +1,32 @@
 import sys
 
 from nmigen import *
+from nmigen.utils import bits_for
 from nmigen.back.pysim import *
 
 from nmigen_soc import wishbone
+from nmigen_soc.memory import MemoryMap
 from minerva.core import Minerva
 
 
 class WishboneROM(Elaboratable):
     def __init__(self, rom_init):
-        self.bus = wishbone.Interface(addr_width=29, data_width=32, granularity=8)
+        self._rom = Memory(width=32, depth=len(rom_init), init=rom_init)
+
+        rom_size = len(rom_init) * 4
+        memory_map = MemoryMap(addr_width=bits_for(rom_size), data_width=8)
+        memory_map.add_resource(self._rom, size=rom_size)
+
+        self.bus = wishbone.Interface(addr_width=bits_for(self._rom.depth),
+                                      data_width=self._rom.width,
+                                      granularity=8)
+        self.bus.memory_map = memory_map
         self.rom_init = rom_init
 
     def elaborate(self, platform):
         m = Module()
 
-        rom = Memory(width=32, depth=len(self.rom_init), init=self.rom_init)
-        m.submodules.rom_rp = rom_rp = rom.read_port()
+        m.submodules.rom_rp = rom_rp = self._rom.read_port()
 
         m.d.comb += [
             rom_rp.addr.eq(self.bus.adr),
@@ -65,6 +75,7 @@ class Top(Elaboratable):
         m.submodules.rom = rom = WishboneROM(rom_init=self.rom_init)
 
         out = wishbone.Interface(addr_width=1, data_width=8)
+        out.memory_map = MemoryMap(addr_width=1, data_width=8)
 
         decoder = wishbone.Decoder(addr_width=30, data_width=32, granularity=8)
         decoder.add(rom.bus, addr=0x00000000)
@@ -105,7 +116,7 @@ class Top(Elaboratable):
 
 if __name__ == "__main__":
     with open("hello.bin", "rb") as f:
-        prog = [w for w in iter(lambda: int.from_bytes(f.read(4), byteorder="little"), 0)]
+        prog = [int.from_bytes(w, "little") for w in iter(lambda: f.read(4), b'')]
 
     dut = Top(rom_init=prog)
     sim = Simulator(dut)
